@@ -518,6 +518,9 @@ at::Tensor PackedConvWeightsQnnp<kSpatialDim>::apply_impl(
     requantization_scales = generate_requantization_scales(
         w_scales, act_input_scale, output_scale);
 
+    // TODO Kimish, we are allocating affine_quantized regardless of per channel or not.
+    // This allocation is actually used only for packing weight and thus will be freed.
+    // Still we should be consistent. Fix this.
     at::Tensor qnnp_weight = at::_empty_affine_quantized(
         weight_contig.sizes(),
         at::device(c10::kCPU)

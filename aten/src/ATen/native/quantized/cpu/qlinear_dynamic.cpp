@@ -254,13 +254,21 @@ at::Tensor PackedLinearWeightsQnnp::apply_dynamic_impl(at::Tensor input) {
   if (!input_scale.has_value()) {
     // Get the original weight and adjust it to uint8 from int8
     auto weight_contig = orig_weight;
-    int8_t* w_data = (int8_t*)weight_contig.data_ptr<c10::qint8>();
+
+    float* weight_scales_data = w_scales.data_ptr<float>();
+    requantization_scales =
+        generate_requantization_scales(w_scales, q_params.scale, 1.f);
+
+    // TODO Kimish, we are allocating affine_quantized regardless of per channel or not.
+    // This allocation is actually used only for packing weight and thus will be freed.
+    // Still we should be consistent. Fix this.
     Tensor qnnp_weight = at::_empty_affine_quantized(
         weight_contig.sizes(),
         at::device(c10::kCPU).dtype(c10::kQUInt8),
-        kernel_scale,
-        kernel_zp);
+        weight_scales_data[0],
+        w_zero_points[0]);
     auto* qnnp_w_data = qnnp_weight.data_ptr<c10::quint8>();
+    int8_t* w_data = (int8_t*)weight_contig.data_ptr<c10::qint8>();
     auto wt_numel = weight_contig.numel();
     for (int i = 0; i < wt_numel; ++i) {
       qnnp_w_data[i] = static_cast<c10::quint8>(w_data[i] + 128);
@@ -273,16 +281,11 @@ at::Tensor PackedLinearWeightsQnnp::apply_dynamic_impl(at::Tensor input) {
     w = std::make_unique<qnnpack::PackBMatrix>(
         cols_w /* input_channels */,
         rows_w /* output_channels */,
-        kernel_zp,
-        kernel_scale,
+        w_zero_points.data(),
+        requantization_scales.data(),
         (uint8_t*)qnnp_w_data,
         nullptr);
     packB = w.get();
-    // Need to move the check here since we are releasing the weights.
-    TORCH_CHECK(
-        orig_weight.qscheme() == at::kPerTensorAffine,
-        "quantized::linear_dynamic (qnnpack) only supports "
-        "Per Tensor Quantization Scheme");
     if (at::globalContext().releaseWeightsWhenPrepacking()) {
       // On mobile, we release the original weight by resetting the intrusive_ptr.
       // Calling unpack after this will throw an assertion.
@@ -313,9 +316,9 @@ at::Tensor PackedLinearWeightsQnnp::apply_dynamic_impl(at::Tensor input) {
       cols_input /* input_channels */,
       rows_w /* output_channels */,
       q_input.q_zero_point(),
-      q_input.q_scale(),
-      kernel_zp,
-      kernel_scale,
+      w_zero_points.data(),
+      /* for dynamic should really be called dequant scale */
+      requantization_scales.data(),
       (uint8_t*)q_input.data_ptr<c10::quint8>(),
       cols_input /* input_stride */,
       packB->getPackedWeights(),
