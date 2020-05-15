@@ -15,6 +15,7 @@
 #endif
 
 #include <ATen/native/vulkan/Vulkan.h>
+#include <ATen/native/vulkan/VulkanCommon.h>
 
 #ifdef USE_VULKAN_GLES_SHADERC_RUNTIME
 #include <ATen/native/vulkan/glsl.h>

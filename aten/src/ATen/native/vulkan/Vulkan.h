@@ -19,10 +19,6 @@
 #define GLSL_SPV(name) name##_spv, name##_spv_len
 #endif
 
-#define UP_DIV(x, y) (((x) + (y) - (1)) / (y))
-#define ROUND_UP(x, y) (((x) + (y) - (1)) / (y) * (y))
-#define ALIGN_UP4(x) ROUND_UP((x), 4)
-
 namespace at {
 namespace native {
 namespace vulkan {

@@ -8,6 +8,7 @@
 
 #include <c10/util/Exception.h>
 
+#include <ATen/native/vulkan/VulkanCommon.h>
 #include <ATen/native/vulkan/gl/GLES.h>
 #include <ATen/native/vulkan/glsl.h>
 
@@ -16,10 +17,6 @@
     GLenum error = glGetError();                              \
     TORCH_CHECK(error == GL_NO_ERROR, "GLES error: ", error); \
   }
-
-#define UP_DIV(x, y) (((x) + (y) - (1)) / (y))
-#define ROUND_UP(x, y) (((x) + (y) - (1)) / (y) * (y))
-#define ALIGN_UP4(x) ROUND_UP((x), 4)
 
 namespace at {
 namespace native {
@@ -33,7 +30,7 @@ class GLContext {
     if (!(eglGetCurrentContext() != EGL_NO_CONTEXT)) {
       display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
       if (display_ == EGL_NO_DISPLAY) {
-        isCreateError_ = true;
+        initFailed_ = true;
       }
       int majorVersion;
       int minorVersion;
@@ -60,7 +57,7 @@ class GLContext {
             display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         eglTerminate(display_);
         display_ = EGL_NO_DISPLAY;
-        isCreateError_ = true;
+        initFailed_ = true;
       }
 
       static const EGLint contextAttribs[] = {
@@ -106,11 +103,11 @@ class GLContext {
       int extNum;
       glGetIntegerv(GL_NUM_EXTENSIONS, &extNum);
       if (major < 3) {
-        isCreateError_ = true;
+        initFailed_ = true;
       }
     } else {
       context_ = EGL_NO_CONTEXT;
-      isCreateError_ = true;
+      initFailed_ = true;
     }
   }
 
@@ -131,15 +128,15 @@ class GLContext {
     eglReleaseThread();
   }
 
-  bool isCreateError() const {
-    return isCreateError_;
+  bool isInitFailed() const {
+    return initFailed_;
   }
 
  private:
   EGLContext context_;
   EGLDisplay display_;
   EGLSurface surface_;
-  bool isCreateError_{false};
+  bool initFailed_{false};
 }; // class GLContext
 
 using buffer_size_t = GLsizeiptr;
@@ -161,7 +158,6 @@ class GLBuffer {
 
   ~GLBuffer() {
     glDeleteBuffers(1, &id_);
-    GL_CHECK_ERROR;
   }
 
   void* map(GLbitfield bufMask) {
@@ -255,7 +251,6 @@ GLImage::GLImage(int w, int h, int d, GLenum texFormat) {
 
 GLImage::~GLImage() {
   glDeleteTextures(1, &id_);
-  GL_CHECK_ERROR;
 }
 
 unsigned int GLImage::id() const {
@@ -323,7 +318,6 @@ class GLShader {
   ~GLShader() {
     glDeleteShader(shaderId_);
     glDeleteProgram(programId_);
-    GL_CHECK_ERROR;
   }
 
   unsigned int getProgramId() const {
@@ -404,24 +398,7 @@ void compute(GLuint dim0, GLuint dim1, GLuint dim2) {
   glDispatchCompute(dim0, dim1, dim2);
 }
 
-inline auto atime_now() {
-  return std::chrono::high_resolution_clock::now();
-}
-
-inline double atime_duration(
-    std::chrono::high_resolution_clock::time_point tp0,
-    std::chrono::high_resolution_clock::time_point tp1) {
-  std::chrono::duration<double> time_span =
-      std::chrono::duration_cast<std::chrono::duration<double>>(tp1 - tp0);
-  return time_span.count();
-}
-
-inline double atime_duration_to_now(
-    std::chrono::high_resolution_clock::time_point tp0) {
-  auto tp1 = std::chrono::high_resolution_clock::now();
-  return atime_duration(tp0, tp1);
-}
-double compute(
+void compute(
     GLuint dim0,
     GLuint dim1,
     GLuint dim2,
@@ -429,13 +406,8 @@ double compute(
     int compGroupSize0,
     int compGroupSize1,
     int compGroupSize2) {
-  glFlush();
-  glFinish();
-
-  auto tp = atime_now();
   compute(dim0, dim1, dim2);
   glFinish();
-  return atime_duration_to_now(tp);
 }
 
 static std::unique_ptr<GLContext> glContext;
@@ -444,7 +416,7 @@ bool initGLContextOnce() {
   static const int once = []() {
     glContext = std::make_unique<GLContext>();
     TORCH_WARN(
-        glContext && !glContext->isCreateError(), "Failed to create GLContext");
+        glContext && !glContext->isInitFailed(), "Failed to create GLContext");
     return 0;
   }();
   ((void)once);
@@ -498,7 +470,6 @@ void addCompGroupSizeDefines(
   const int compGroupInvocations =
       compGroupSize[0] * compGroupSize[1] * compGroupSize[2];
   if (compGroupInvocations > maxCompGroupInvocations) {
-    int oldCompGroupSizeZ = compGroupSize[2];
     compGroupSize[2] =
         maxCompGroupInvocations / (compGroupSize[0] * compGroupSize[1]);
   }
@@ -537,7 +508,7 @@ void hostCHW_to_deviceTex(
   GL_CHECK_ERROR;
 }
 
-double deviceTex2hostCHW(
+void deviceTex2hostCHW(
     GLuint texId,
     float* outputData,
     int d0,
@@ -558,8 +529,7 @@ double deviceTex2hostCHW(
   glUniform1i(3, d1);
   GL_CHECK_ERROR;
 
-  double shaderTime =
-      compute(UP_DIV(d0, 8), UP_DIV(d1, 8), d2_4, "dTex2hCHW", 8, 8, 1);
+  compute(UP_DIV(d0, 8), UP_DIV(d1, 8), d2_4, "dTex2hCHW", 8, 8, 1);
   GL_CHECK_ERROR;
 
   glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -570,7 +540,6 @@ double deviceTex2hostCHW(
     ::memcpy(outputData, dOutputData, d0 * d1 * d2 * sizeof(float));
   }
   buffer->unmap();
-  return shaderTime;
 }
 
 void upsample_nearest2d(
@@ -622,8 +591,7 @@ void add(
     const GLTensor& input1,
     float alpha) {
   auto sizes = output.sizes();
-  auto N = sizes[0];
-  auto C = sizes[1];
+  auto C = sizes[0] * sizes[1];
   auto H = sizes[2];
   auto W = sizes[3];
   auto C_4 = UP_DIV(C, 4);
@@ -653,6 +621,17 @@ void add(
       compGroupSize[1],
       compGroupSize[2]);
   GL_CHECK_ERROR;
+}
+
+void conv2d_prepack_weights(
+    GLTensor& output,
+    const float* weight,
+    int64_t OC,
+    int64_t C,
+    int64_t KH,
+    int64_t KW) {
+  TORCH_INTERNAL_ASSERT(
+      false, "conv2d prepack weights not implemented for GLES");
 }
 
 auto kernelNCHW_OCHW_repack_O4C4HWi4o4(
@@ -736,30 +715,20 @@ void conv2d(
     int64_t DX,
     int64_t G) {
   auto osizes = output.sizes();
-  auto isizes = input.sizes();
+  Conv2DParams c2ds{
+      input.sizes(), osizes[1], KH, KW, SY, SX, PY, PX, DY, DX, G};
+  TORCH_INTERNAL_ASSERT(osizes[2] == c2ds.OH);
+  TORCH_INTERNAL_ASSERT(osizes[3] == c2ds.OW);
 
-  int64_t OC = osizes[1];
-  int64_t C = isizes[1];
-  int64_t H = isizes[2];
-  int64_t W = isizes[3];
-  const int64_t OC_4 = UP_DIV(OC, 4);
-  const int64_t C_4 = UP_DIV(C, 4);
+  auto biasBuf = GLBuffer::from(
+      bias, sizeof(float) * ALIGN_UP4(c2ds.OC), sizeof(float) * c2ds.OC);
 
-  const int64_t KWE = (KW - 1) * DX + 1;
-  const int64_t KHE = (KH - 1) * DY + 1;
-  const int64_t OW = ((W - KWE + 2 * PX) / SX) + 1;
-  const int64_t OH = ((H - KHE + 2 * PY) / SY) + 1;
-  TORCH_INTERNAL_ASSERT(osizes[2] == OH);
-  TORCH_INTERNAL_ASSERT(osizes[3] == OW);
-
-  auto biasBuf =
-      GLBuffer::from(bias, sizeof(float) * ALIGN_UP4(OC), sizeof(float) * OC);
-
-  auto kernelTex = conv2d_kernel_tex_from_hostCHW(weight, OC, C, KH, KW);
+  auto kernelTex =
+      conv2d_kernel_tex_from_hostCHW(weight, c2ds.OC, c2ds.C, c2ds.KH, c2ds.KW);
 
   int compGroupSize[3];
   std::vector<std::string> header;
-  addCompGroupSizeDefines(header, compGroupSize, 1, 1, OC_4);
+  addCompGroupSizeDefines(header, compGroupSize, 1, 1, c2ds.OC_4);
 
   auto shaderKey = "conv_tex_IKnc4hw_glsl";
   auto convProgram =
@@ -777,14 +746,14 @@ void conv2d(
   glUniform2i(5, KW, KH);
   glUniform2i(6, SX, SY);
   glUniform2i(7, DX, DY);
-  glUniform3i(8, OW, OH, OC_4);
-  glUniform3i(9, W, H, C_4);
+  glUniform3i(8, c2ds.OW, c2ds.OH, c2ds.OC_4);
+  glUniform3i(9, c2ds.W, c2ds.H, c2ds.C_4);
   GL_CHECK_ERROR;
 
   compute(
-      UP_DIV(OW, 4 * compGroupSize[0]),
-      UP_DIV(OH, compGroupSize[1]),
-      UP_DIV(OC_4, compGroupSize[2]),
+      UP_DIV(c2ds.OW, 4 * compGroupSize[0]),
+      UP_DIV(c2ds.OH, compGroupSize[1]),
+      UP_DIV(c2ds.OC_4, compGroupSize[2]),
       "conv_tex",
       compGroupSize[0],
       compGroupSize[1],
@@ -794,6 +763,43 @@ void conv2d(
 
 void clamp(GLTensor& output, const GLTensor& input, float min, float max) {
   TORCH_INTERNAL_ASSERT(false, "clamp not implemented for GLES");
+}
+
+void conv2d(
+    GLTensor& output,
+    const GLTensor& input,
+    const GLTensor& weight_prepacked,
+    int64_t KH,
+    int64_t KW,
+    const c10::optional<float*> bias,
+    int64_t SY,
+    int64_t SX,
+    int64_t PY,
+    int64_t PX,
+    int64_t DY,
+    int64_t DX,
+    int64_t G) {
+  TORCH_INTERNAL_ASSERT(
+      false, "conv2d with prepacked weight is not implemented for GLES");
+}
+
+void conv2d(
+    GLTensor& output,
+    const GLTensor& input,
+    const GLTensor& weight_prepacked,
+    int64_t KH,
+    int64_t KW,
+    const GLTensor& bias,
+    int64_t SY,
+    int64_t SX,
+    int64_t PY,
+    int64_t PX,
+    int64_t DY,
+    int64_t DX,
+    int64_t G) {
+  TORCH_INTERNAL_ASSERT(
+      false,
+      "conv2d with prepacked weight and bias is not implemented for GLES");
 }
 
 void addmm(
@@ -833,9 +839,8 @@ class GLTensor::Impl {
     return numel_;
   }
 
-  void setDataFromHost(const float* data) {
-    int N = sizes_[0];
-    int C = sizes_[1];
+  void set_data_from_host(const float* data) {
+    int C = sizes_[0] * sizes_[1];
     int H = sizes_[2];
     int W = sizes_[3];
     int C_4 = UP_DIV(C, 4);
@@ -845,23 +850,18 @@ class GLTensor::Impl {
     tex_ = std::move(tex);
   }
 
-  void copyDataToHost(float* output) {
-    int N = sizes_[0];
-    int C = sizes_[1];
+  void copy_data_to_host(float* output) {
+    int C = sizes_[0] * sizes_[1];
     int H = sizes_[2];
     int W = sizes_[3];
-    int C_4 = UP_DIV(C, 4);
-
     deviceTex2hostCHW(tex_->id(), output, W, H, C);
   }
 
-  void allocateStorage() {
-    int N = sizes_[0];
-    int C = sizes_[1];
+  void allocate_storage() {
+    int C = sizes_[0] * sizes_[1];
     int H = sizes_[2];
     int W = sizes_[3];
     int C_4 = UP_DIV(C, 4);
-
     auto tex = std::make_unique<GLImage>(W, H, C_4, getTexFormat());
     tex_ = std::move(tex);
   }
@@ -901,20 +901,20 @@ int64_t GLTensor::numel() const {
   return impl()->numel();
 }
 
-bool GLTensor::hasStorage() const {
+bool GLTensor::has_storage() const {
   return impl()->hasImage();
 }
 
-void GLTensor::allocateStorage() {
-  impl()->allocateStorage();
+void GLTensor::allocate_storage() {
+  impl()->allocate_storage();
 }
 
-void GLTensor::setDataFromHost(const float* inputData) {
-  impl()->setDataFromHost(inputData);
+void GLTensor::set_data_from_host(const float* inputData) {
+  impl()->set_data_from_host(inputData);
 }
 
-void GLTensor::copyDataToHost(float* outputData) {
-  impl()->copyDataToHost(outputData);
+void GLTensor::copy_data_to_host(float* outputData) {
+  impl()->copy_data_to_host(outputData);
 }
 
 int GLTensor::texId() const {

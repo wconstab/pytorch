@@ -240,7 +240,7 @@ void conv2d_depthwise(
                 {c2ds.W, c2ds.H, c2ds.C_4, 0}};
   VBuffer constBuffer = makeUniformConstBuffer((void*)&cb, sizeof(cb));
 
-  VulkanTensor kernel{std::vector<int64_t>{c2ds.OC, c2ds.KH, c2ds.KW}};
+  VulkanTensor kernel{{c2ds.OC, c2ds.KH, c2ds.KW}};
   kernel.set_data_from_host(weight);
 
   VkDescriptorSetLayout descriptorSetLayout{};

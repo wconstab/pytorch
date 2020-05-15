@@ -40,10 +40,10 @@ class GLTensor {
   int64_t dim() const;
   int64_t numel() const;
 
-  bool hasStorage() const;
-  void allocateStorage();
-  void setDataFromHost(const float* inputData);
-  void copyDataToHost(float* outputData);
+  bool has_storage() const;
+  void allocate_storage();
+  void set_data_from_host(const float* inputData);
+  void copy_data_to_host(float* outputData);
 
   int texId() const;
 
@@ -89,6 +89,14 @@ void add(
     const GLTensor& input1,
     float alpha);
 
+void conv2d_prepack_weights(
+    GLTensor& output,
+    const float* weight,
+    int64_t OC,
+    int64_t C,
+    int64_t KH,
+    int64_t KW);
+
 void conv2d(
     GLTensor& output,
     const GLTensor& input,
@@ -96,6 +104,36 @@ void conv2d(
     int64_t KH,
     int64_t KW,
     const float* bias,
+    int64_t SY,
+    int64_t SX,
+    int64_t PY,
+    int64_t PX,
+    int64_t DY,
+    int64_t DX,
+    int64_t G);
+
+void conv2d(
+    GLTensor& output,
+    const GLTensor& input,
+    const GLTensor& weight_prepacked,
+    int64_t KH,
+    int64_t KW,
+    const c10::optional<float*> bias,
+    int64_t SY,
+    int64_t SX,
+    int64_t PY,
+    int64_t PX,
+    int64_t DY,
+    int64_t DX,
+    int64_t G);
+
+void conv2d(
+    GLTensor& output,
+    const GLTensor& input,
+    const GLTensor& weight_prepacked,
+    int64_t KH,
+    int64_t KW,
+    const GLTensor& bias,
     int64_t SY,
     int64_t SX,
     int64_t PY,
