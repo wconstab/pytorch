@@ -34,6 +34,10 @@
 #include <queue>
 #include <TH/TH.h>
 
+#define WILL() do { std::cerr << __LINE__ << ":" << __func__ << std::endl; } while (0)
+#define WILL_MSG(x) do { std::cerr << __LINE__ << ":" << __func__ << ": " << x << std::endl; } while (0)
+
+
 namespace torch { namespace autograd {
 
 namespace {
@@ -720,6 +724,7 @@ void Engine::evaluate_function(
   const auto opt_parent_stream = (*func).stream(c10::DeviceType::CUDA);
   c10::OptionalStreamGuard parent_stream_guard{opt_parent_stream};
 
+  WILL_MSG("call_function " << func->name());
   auto outputs = call_function(graph_task, func, inputs);
 
   auto& fn = *func;
