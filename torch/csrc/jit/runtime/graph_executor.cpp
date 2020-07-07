@@ -50,6 +50,8 @@
 #include <utility>
 #include <vector>
 
+#define WILL() do { std::cerr << "GE" << __LINE__ << ":" << __func__ << std::endl; } while (0)
+#define WILL_MSG(x) do { std::cerr << "GE" << __LINE__ << ":" << __func__ << ": " << x << std::endl; } while (0)
 namespace torch {
 namespace jit {
 
@@ -482,6 +484,7 @@ void GraphExecutorImplBase::run(Stack& stack) {
 }
 
 c10::intrusive_ptr<Future> GraphExecutorImplBase::runAsync(Stack& stack) {
+  WILL();
   TORCH_CHECK(
       stack.size() >= num_inputs,
       "expected ",
@@ -578,6 +581,7 @@ struct GraphExecutorImpl : public GraphExecutorImplBase {
   }
 
   ExecutionPlan compileSpec(const ArgumentSpec& spec) {
+    WILL();
     auto opt_graph = graph->copy();
     SOURCE_DUMP("Optimizing the following function:", opt_graph);
     arg_spec_creator_.specializeTypes(*opt_graph, spec);
@@ -699,6 +703,7 @@ TORCH_API bool IsNewExecutorEnabled() {
 }
 
 void runRequiredPasses(const std::shared_ptr<Graph>& g) {
+  WILL();
   // implicit inserted expand nodes are not necessarily always valid
   // when used inside script methods that might have unstable shapes
   // we remove the implicitly created ones, and have shape analysis
@@ -756,6 +761,7 @@ bool needsGradient(const std::shared_ptr<const Graph>& graph) {
 void runNondiffOptimization(
     std::shared_ptr<Graph>& graph,
     bool strict_fuser_check) {
+  WILL();
   // Run custom passes that different backends can register.
   for (const auto& passPair : getCustomPrePasses()) {
     passPair.first(graph);
@@ -789,6 +795,7 @@ void runNondiffOptimization(
 }
 
 void runOptimization(std::shared_ptr<Graph>& graph, bool unroll) {
+  WILL();
   // Basic graph preprocessing to eliminate noise.
   EliminateDeadCode(graph);
   EliminateCommonSubexpression(graph);

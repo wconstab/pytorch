@@ -24,6 +24,8 @@
 #include <torch/csrc/jit/passes/shape_analysis.h>
 #include <torch/csrc/jit/passes/specialize_autogradzero.h>
 
+#define WILL() do { std::cerr << "PE" << __LINE__ << ":" << __func__ << std::endl; } while (0)
+#define WILL_MSG(x) do { std::cerr << "PE" << __LINE__ << ":" << __func__ << ": " << x << std::endl; } while (0)
 C10_DECLARE_bool();
 
 C10_DEFINE_bool(
@@ -81,6 +83,7 @@ static bool needsGradientInProfilingMode(Block* b) {
 
 void ProfilingGraphExecutorImpl::runProfilingOptimizations(
     std::shared_ptr<Graph>& copy) {
+  WILL();
   if (!getGraphExecutorOptimize()) {
     LowerGradOf(*copy);
     runRequiredPasses(copy);
@@ -124,6 +127,7 @@ void ProfilingGraphExecutorImpl::runProfilingOptimizations(
 
 void ProfilingGraphExecutorImpl::runProfilingInsensitiveOptimizations(
     std::shared_ptr<Graph>& copy) {
+  WILL();
   ClearProfilingInformation(copy);
   LowerGradOf(*copy);
   GRAPH_DUMP("runProfilingInsensitiveOptimizations", copy);
@@ -156,6 +160,7 @@ ProfilingGraphExecutorImpl::ProfilingGraphExecutorImpl(
 ExecutionPlan ProfilingGraphExecutorImpl::getPlanFor(
     Stack& stack,
     size_t remaining_bailout_depth) {
+  WILL();
   std::lock_guard<std::mutex> lock(compile_mutex);
   GRAPH_DEBUG("Running ProfilingGraphExecutorImpl ", this);
 
