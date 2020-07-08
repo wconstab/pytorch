@@ -8,6 +8,7 @@
 #include <torch/csrc/jit/passes/constant_pooling.h>
 #include <torch/csrc/jit/passes/constant_propagation.h>
 #include <torch/csrc/jit/passes/create_autodiff_subgraphs.h>
+#include <torch/csrc/jit/passes/create_functional_graphs.h>
 #include <torch/csrc/jit/passes/dead_code_elimination.h>
 #include <torch/csrc/jit/passes/decompose_ops.h>
 #include <torch/csrc/jit/passes/graph_fuser.h>
@@ -89,7 +90,20 @@ void ProfilingGraphExecutorImpl::runProfilingOptimizations(
 
   InsertGuards(copy);
   LowerGradOf(*copy);
+
+  // WHC inserted
+  // Unroll small loops, and eliminate expressions that are the same at every
+  // iteration.
+  {
+    UnrollLoops(graph);
+    // run again with unrolled loops
+    RemoveListMutation(graph);
+    PeepholeOptimize(graph);
+    ConstantPropagation(graph);
+  }
+  GRAPH_DUMP("After UnrollLoops and company ", copy);
   EliminateRedundantGuards(copy);
+  GRAPH_DUMP("After EliminateRedundantGuards", copy);
   InsertBailOuts(copy);
   GRAPH_DUMP("After InsertBailOuts: ", copy);
   specializeAutogradZero(*copy);
