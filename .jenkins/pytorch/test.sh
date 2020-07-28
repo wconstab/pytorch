@@ -330,12 +330,14 @@ test_bazel() {
 }
 
 test_benchmarks() {
-  pip_install --user "pytest-benchmark==3.2.3"
-  BENCHMARK_DATA="benchmarks/.data"
-  mkdir -p ${BENCHMARK_DATA}
-  pytest benchmarks/fastrnns/test_bench.py --benchmark-json=${BENCHMARK_DATA}/fastrnns.json
-  python benchmarks/upload_scribe.py --pytest_bench_json ${BENCHMARK_DATA}/fastrnns.json
-  assert_git_not_dirty
+  if [[ "$BUILD_ENVIRONMENT" == *cuda* ]]; then
+    pip_install --user "pytest-benchmark==3.2.3"
+    BENCHMARK_DATA="benchmarks/.data"
+    mkdir -p ${BENCHMARK_DATA}
+    pytest benchmarks/fastrnns/test_bench.py --benchmark-json=${BENCHMARK_DATA}/fastrnns.json
+    python benchmarks/upload_scribe.py --pytest_bench_json ${BENCHMARK_DATA}/fastrnns.json
+    assert_git_not_dirty
+  fi
 }
 
 test_cpp_extensions() {
